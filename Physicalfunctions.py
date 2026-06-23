@@ -18,7 +18,7 @@ class PINN_DoublePendulum(nn.Module):
         # TURN t INTO AN INTERN VECTOR
         layers.append(nn.Linear(input_dim, hidden_dim))
         # ACTIVATION FUNCTION
-        layers.append(nn.GELU())
+        layers.append(nn.Tanh())
         
         # HIDDEN LAYERS
         for _ in range(num_layers - 1):
@@ -59,13 +59,13 @@ def time_derivatives(model, t):
     d2theta1 = torch.autograd.grad(
         dtheta1, t,
         grad_outputs=torch.ones_like(dtheta1),
-        create_graph=True, retain_graph=True
+        create_graph=True
     )[0]
 
     d2theta2 = torch.autograd.grad(
         dtheta2, t,
         grad_outputs=torch.ones_like(dtheta2),
-        create_graph=True, retain_graph=True
+        create_graph=True
     )[0]
 
     d2theta = torch.hstack((d2theta1, d2theta2))
@@ -159,7 +159,7 @@ def physical_loss(theta_pred, dtheta_pred, d2theta_pred,
     residual = alpha_real - alpha_phys
 
     # 🔥 CLIPPING SUAVE DEL RESIDUAL (MUY IMPORTANTE)
-    residual = torch.clamp(residual, -50, 50)
+    residual = torch.clamp(residual, -30, 30)
 
     # =========================
     # LOSS FÍSICO
