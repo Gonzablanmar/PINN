@@ -8,5 +8,5 @@ params = (
     1.0,  # l2
     9.81  # g
 )
-num_epochs = 3000
+num_epochs = 4000
 batch_size = 512

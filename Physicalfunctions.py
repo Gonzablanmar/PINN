@@ -10,7 +10,7 @@ class TanhSin(nn.Module):
 
 # PHYSICAL INFORMED NEURAL NETWORK
 class PINN_DoublePendulum(nn.Module):
-    def __init__(self, input_dim=1, output_dim=2, hidden_dim=256, num_layers=4):
+    def __init__(self, input_dim=1, output_dim=2, hidden_dim=284, num_layers=4):
         super().__init__()
         
         layers = []
