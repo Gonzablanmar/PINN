@@ -8,28 +8,42 @@ class TanhSin(nn.Module):
         return torch.tanh(x) + torch.sin(x)
     
 
-# PHYSICAL INFORMED NEURAL NETWORK
 class PINN_DoublePendulum(nn.Module):
-    def __init__(self, input_dim=1, output_dim=2, hidden_dim=284, num_layers=4):
+
+    def __init__(
+        self,
+        input_dim=1,
+        output_dim=2,
+        hidden_dim=284,
+        num_layers=4
+    ):
+
         super().__init__()
-        
+
         layers = []
-        
-        # TURN t INTO AN INTERN VECTOR
-        layers.append(nn.Linear(input_dim, hidden_dim))
-        # ACTIVATION FUNCTION
-        layers.append(nn.Tanh())
-        
-        # HIDDEN LAYERS
+
+        layers.append(
+            nn.Linear(input_dim, hidden_dim)
+        )
+        layers.append(TanhSin())
+
         for _ in range(num_layers - 1):
-            layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.Tanh())
-        
-        # OUTPUT -> [THETA1, THETA2]
-        layers.append(nn.Linear(hidden_dim, output_dim))
-        
+            layers.append(
+                nn.Linear(hidden_dim, hidden_dim)
+            )
+            layers.append(TanhSin())
+
+        layers.append(
+            nn.Linear(hidden_dim, output_dim)
+        )
+
         self.model = nn.Sequential(*layers)
-    # FORWARD; THETA(t) = NN(t)
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight)
+                nn.init.zeros_(m.bias)
+
     def forward(self, t):
         return self.model(t)
 
@@ -133,45 +147,37 @@ def physical_loss(theta_pred, dtheta_pred, d2theta_pred,
                   omega_mean, omega_std,
                   alpha_mean, alpha_std):
 
-    # =========================
-    # Escalado temporal
-    # =========================
     dt_scale = (t_max - t_min)
 
-    omega_pred = dtheta_pred / dt_scale
-    alpha_pred = d2theta_pred / (dt_scale**2)
-
-    # =========================
-    # DESNORMALIZACIÓN
-    # =========================
+    # Variables físicas
     theta_real = theta_pred * theta_std + theta_mean
-    omega_real = omega_pred * omega_std + omega_mean
-    alpha_real = alpha_pred 
 
-    # =========================
-    # MODELO FÍSICO
-    # =========================
-    alpha_phys = double_pendulum_acc(theta_real, omega_real, params)
+    omega_real = (
+        dtheta_pred * theta_std
+    ) / dt_scale
 
-    # =========================
-    # RESIDUAL (CLAVE)
-    # =========================
+    alpha_real = (
+        d2theta_pred * theta_std
+    ) / (dt_scale**2)
+
+    alpha_phys = double_pendulum_acc(
+        theta_real,
+        omega_real,
+        params
+    )
+
     residual = alpha_real - alpha_phys
 
-    # 🔥 CLIPPING SUAVE DEL RESIDUAL (MUY IMPORTANTE)
-    residual = torch.clamp(residual, -30, 30)
+    loss_phys = torch.mean(
+        torch.log1p(residual**2)
+    )
 
-    # =========================
-    # LOSS FÍSICO
-    # =========================
-    loss_phys = torch.mean(residual**2)
-
-    # =========================
-    # PROTECCIÓN ANTI-NaN
-    # =========================
     if torch.isnan(loss_phys):
-        print("NaN en loss_phys")
-        return torch.tensor(0.0, dtype=torch.float64, requires_grad=True)
+        return torch.tensor(
+            0.0,
+            dtype=torch.float32,
+            requires_grad=True
+        )
 
     return loss_phys
 def energy(theta, omega, params): 
@@ -204,7 +210,7 @@ def energy_loss(theta_real, omega_real, params):
     E = energy(theta_real, omega_real, params)
     
     # comparar con valor inicial
-    E0 = torch.mean(E)
+    E0 = E[0:1]
     
     loss_E = torch.mean((E - E0)**2)
     

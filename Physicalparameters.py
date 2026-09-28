@@ -10,3 +10,7 @@ params = (
 )
 num_epochs = 4000
 batch_size = 512
+loss_hist = []
+loss_data_hist = []
+loss_phys_hist = []
+loss_energy_hist = []
