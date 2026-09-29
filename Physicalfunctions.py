@@ -20,7 +20,7 @@ class PINN_DoublePendulum(nn.Module):
         super().__init__()
 
         self.net = nn.Sequential(
-            nn.Linear(5, hidden_size),
+            nn.Linear(11, hidden_size),
             nn.Tanh(),
 
             nn.Linear(hidden_size, hidden_size),
@@ -35,8 +35,6 @@ class PINN_DoublePendulum(nn.Module):
             nn.Linear(hidden_size, 2)
         )
 
-        # Se guardan dentro del modelo para convertir la
-        # velocidad inicial a la escala normalizada del ángulo
         self.register_buffer(
             "theta_std",
             theta_std.detach().clone().float()
@@ -55,38 +53,45 @@ class PINN_DoublePendulum(nn.Module):
         self.dt_scale = float(dt_scale)
 
     def forward(self, x):
-        """
-        Entrada:
-        x[:, 0]   = tiempo normalizado
-        x[:, 1:3] = theta inicial normalizada
-        x[:, 3:5] = omega inicial normalizada
-
-        Salida:
-        theta normalizada
-        """
-
+        # Entrada original
         t_norm = x[:, 0:1]
         theta0_norm = x[:, 1:3]
         omega0_norm = x[:, 3:5]
 
-        # Recuperar velocidad inicial física, rad/s
+        # Velocidad física inicial
         omega0_real = (
             omega0_norm * self.omega_std
             + self.omega_mean
         )
 
-        # Convertir la velocidad física a:
-        # d(theta_norm) / d(t_norm)
+        # Pendiente inicial respecto al tiempo normalizado
         initial_slope_norm = (
             omega0_real
             * self.dt_scale
             / self.theta_std
         )
 
-        # Corrección libre aprendida por la red
-        correction = self.net(x)
+        # Características temporales de Fourier
+        time_features = torch.cat([
+            t_norm,
+            torch.sin(2.0 * torch.pi * t_norm),
+            torch.cos(2.0 * torch.pi * t_norm),
+            torch.sin(4.0 * torch.pi * t_norm),
+            torch.cos(4.0 * torch.pi * t_norm),
+            torch.sin(8.0 * torch.pi * t_norm),
+            torch.cos(8.0 * torch.pi * t_norm)
+        ], dim=1)
 
-        # Condiciones iniciales impuestas exactamente
+        # 7 características temporales + 4 condiciones iniciales
+        network_input = torch.cat([
+            time_features,
+            theta0_norm,
+            omega0_norm
+        ], dim=1)
+
+        correction = self.net(network_input)
+
+        # Condiciones iniciales exactas
         theta_norm = (
             theta0_norm
             + t_norm * initial_slope_norm
