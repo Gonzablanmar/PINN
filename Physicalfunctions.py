@@ -9,80 +9,143 @@ class TanhSin(nn.Module):
     
 
 class PINN_DoublePendulum(nn.Module):
-
     def __init__(
         self,
-        input_dim=1,
-        output_dim=2,
-        hidden_dim=284,
-        num_layers=4
+        theta_std,
+        omega_mean,
+        omega_std,
+        dt_scale,
+        hidden_size=256
     ):
-
         super().__init__()
 
-        layers = []
+        self.net = nn.Sequential(
+            nn.Linear(5, hidden_size),
+            nn.Tanh(),
 
-        layers.append(
-            nn.Linear(input_dim, hidden_dim)
+            nn.Linear(hidden_size, hidden_size),
+            nn.Tanh(),
+
+            nn.Linear(hidden_size, hidden_size),
+            nn.Tanh(),
+
+            nn.Linear(hidden_size, hidden_size),
+            nn.Tanh(),
+
+            nn.Linear(hidden_size, 2)
         )
-        layers.append(TanhSin())
 
-        for _ in range(num_layers - 1):
-            layers.append(
-                nn.Linear(hidden_dim, hidden_dim)
-            )
-            layers.append(TanhSin())
-
-        layers.append(
-            nn.Linear(hidden_dim, output_dim)
+        # Se guardan dentro del modelo para convertir la
+        # velocidad inicial a la escala normalizada del ángulo
+        self.register_buffer(
+            "theta_std",
+            theta_std.detach().clone().float()
         )
 
-        self.model = nn.Sequential(*layers)
+        self.register_buffer(
+            "omega_mean",
+            omega_mean.detach().clone().float()
+        )
 
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight)
-                nn.init.zeros_(m.bias)
+        self.register_buffer(
+            "omega_std",
+            omega_std.detach().clone().float()
+        )
 
-    def forward(self, t):
-        return self.model(t)
+        self.dt_scale = float(dt_scale)
 
-def time_derivatives(model, t):
-    t.requires_grad_(True)
+    def forward(self, x):
+        """
+        Entrada:
+        x[:, 0]   = tiempo normalizado
+        x[:, 1:3] = theta inicial normalizada
+        x[:, 3:5] = omega inicial normalizada
 
-    theta = model(t)
+        Salida:
+        theta normalizada
+        """
 
-    theta1 = theta[:, 0:1]
-    theta2 = theta[:, 1:2]
+        t_norm = x[:, 0:1]
+        theta0_norm = x[:, 1:3]
+        omega0_norm = x[:, 3:5]
 
-    dtheta1 = torch.autograd.grad(
-        theta1, t,
-        grad_outputs=torch.ones_like(theta1),
-        create_graph=True, retain_graph=True
-    )[0]
+        # Recuperar velocidad inicial física, rad/s
+        omega0_real = (
+            omega0_norm * self.omega_std
+            + self.omega_mean
+        )
 
-    dtheta2 = torch.autograd.grad(
-        theta2, t,
-        grad_outputs=torch.ones_like(theta2),
-        create_graph=True, retain_graph=True
-    )[0]
+        # Convertir la velocidad física a:
+        # d(theta_norm) / d(t_norm)
+        initial_slope_norm = (
+            omega0_real
+            * self.dt_scale
+            / self.theta_std
+        )
 
-    dtheta = torch.hstack((dtheta1, dtheta2))
+        # Corrección libre aprendida por la red
+        correction = self.net(x)
 
-    # Segunda derivada
-    d2theta1 = torch.autograd.grad(
-        dtheta1, t,
-        grad_outputs=torch.ones_like(dtheta1),
-        create_graph=True
-    )[0]
+        # Condiciones iniciales impuestas exactamente
+        theta_norm = (
+            theta0_norm
+            + t_norm * initial_slope_norm
+            + t_norm.pow(2) * correction
+        )
 
-    d2theta2 = torch.autograd.grad(
-        dtheta2, t,
-        grad_outputs=torch.ones_like(dtheta2),
-        create_graph=True
-    )[0]
+        return theta_norm
+def time_derivatives(model, t, initial_conditions):
+    """
+    t:
+        Tiempo normalizado, shape [batch, 1].
 
-    d2theta = torch.hstack((d2theta1, d2theta2))
+    initial_conditions:
+        Condiciones iniciales normalizadas, shape [batch, 4]
+        [theta1_0, theta2_0, omega1_0, omega2_0].
+    """
+
+    # Creamos un tensor independiente para poder derivar respecto al tiempo
+    if not t.requires_grad:
+        t = t.clone().detach().requires_grad_(True)
+
+    # Entrada completa de la PINN
+    model_input = torch.cat(
+        [t, initial_conditions],
+        dim=1
+    )
+
+    # Ángulos normalizados
+    theta = model(model_input)
+
+    first_derivatives = []
+    second_derivatives = []
+
+    for output_index in range(2):
+        theta_i = theta[:, output_index:output_index + 1]
+
+        # Primera derivada respecto al tiempo
+        dtheta_i = torch.autograd.grad(
+            outputs=theta_i,
+            inputs=t,
+            grad_outputs=torch.ones_like(theta_i),
+            create_graph=True,
+            retain_graph=True
+        )[0]
+
+        # Segunda derivada respecto al tiempo
+        d2theta_i = torch.autograd.grad(
+            outputs=dtheta_i,
+            inputs=t,
+            grad_outputs=torch.ones_like(dtheta_i),
+            create_graph=True,
+            retain_graph=True
+        )[0]
+
+        first_derivatives.append(dtheta_i)
+        second_derivatives.append(d2theta_i)
+
+    dtheta = torch.cat(first_derivatives, dim=1)
+    d2theta = torch.cat(second_derivatives, dim=1)
 
     return theta, dtheta, d2theta
 

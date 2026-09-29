@@ -8,9 +8,13 @@ params = (
     1.0,  # l2
     9.81  # g
 )
-num_epochs = 4000
+num_epochs = 600
 batch_size = 512
 loss_hist = []
 loss_data_hist = []
 loss_phys_hist = []
 loss_energy_hist = []
+loss_theta_hist = []
+loss_omega_hist = []
+loss_alpha_hist = []
+loss_phys_raw_hist = []
